@@ -1566,8 +1566,14 @@ jobs:
         include:
           - target: amd64
             runner: ubuntu-24.04
+          # arm64 assembles on an x86 runner too: the per-arch
+          # kernel-toolchain images are x86_64 containers carrying an
+          # aarch64 CROSS toolchain (the same image the userland lane uses),
+          # so they cannot run -- or even pull -- on an ARM runner. Only the
+          # kext-boot job below goes native-ARM (to KVM-boot the aarch64
+          # image), exactly like the userland lane's split.
           - target: arm64
-            runner: ubuntu-24.04-arm
+            runner: ubuntu-24.04
     timeout-minutes: 45
     container:
       # The shared assembly host-builds makefs/mkimg/pwd_mkdb/cap_mkdb from
