@@ -1545,15 +1545,18 @@ jobs:
         run: ./tests/personalities-selftest.sh
 
   # PR-only kext lane (nextbsd-ci#6, T6): prove the virtio-gpu graphics kext
-  # stack is what kextd autoloads in a BOOTED nextbsd image, on both arches.
-  # The nextbsd `continuous` image must already ship the kextload/kextstat/
-  # kextunload trio (nextbsd Phase 1). The shared harness boots both arches
-  # with -device virtio-gpu-pci (nextbsd-ci v0.3.0: alongside q35's default
-  # VGA on amd64, as the display on virt/arm64), so the binding kext is
-  # VirtIOGraphics and the on-image assertion is identical on both lanes.
-  # PR-only, never publishes.
-  kext-smoke-test:
-    name: kext boot test (VirtIOGraphics autoload, in a booted nextbsd image)
+  # stack is what kextd autoloads in a BOOTED NextBSD system, on both arches.
+  # Same shape as nextbsd-userland's lane: the image is ASSEMBLED here from the
+  # latest component `continuous` artifacts (base, kernel, userland, contrib)
+  # plus this PR's own kext build, via the SHARED nextbsd-ci assembly (pinned
+  # release tag) -- no freebsd-vm, no prebuilt-image mutation, no pkg. It is
+  # then booted in the shared harness and asserted on the virtio-gpu trio.
+  # The harness boots both arches with -device virtio-gpu-pci (nextbsd-ci
+  # v0.3.2: alongside q35's default VGA on amd64, as the display on
+  # virt/arm64), so the binding kext is VirtIOGraphics on BOTH lanes and the
+  # on-image assertion is identical. PR-only, never publishes.
+  kext-image:
+    name: "kext image (assemble: continuous components + this PR's kexts)"
     needs: [drm-kmod]
     if: github.event_name == 'pull_request'
     runs-on: ${{ matrix.runner }}
@@ -1565,113 +1568,120 @@ jobs:
             runner: ubuntu-24.04
           - target: arm64
             runner: ubuntu-24.04-arm
-    timeout-minutes: 60
+    timeout-minutes: 45
+    container:
+      # The shared assembly host-builds makefs/mkimg/pwd_mkdb/cap_mkdb from
+      # /usr/src via the cross toolchain when they are not on PATH; the
+      # kernel-toolchain image provides both (same image the userland lane
+      # assembles in).
+      image: ghcr.io/nextbsd/nextbsd-kernel-toolchain:${{ matrix.target }}-latest
     steps:
-      - name: Checkout (tools/ + tests/)
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Free disk space
-        uses: jlumbroso/free-disk-space@main
-        with:
-          tool-cache: true
-          android: true
-          dotnet: true
-          haskell: true
-          large-packages: false
-          docker-images: false
-          swap-storage: false
-
-      # The graphics stack comes from the drm-kmod job, already wrapped and
-      # validated there. The lane asserts only the virtio-gpu trio — the kext
-      # the machine shape binds on both arches. (The nmdm/IntelWiFi/
-      # IntelEthernet conversions this PoC carried are retired: the lane now
-      # proves the device-matched GPU kext, not arbitrary leaf drivers.)
-      - name: Download graphics kexts (${{ matrix.target }})
+      # The graphics stack this PR just built (drm-kmod job): kextd autoloads
+      # whatever here matches a present device, and the machine shape presents
+      # a virtio-gpu -- so VirtIOGraphics (resolving through LinuxVirtIO +
+      # IOGraphicsShmem) is what the on-image test asserts.
+      - name: Download this PR's graphics kexts
         uses: actions/download-artifact@v4
         with:
           name: graphics-kexts-${{ matrix.target }}
           path: gfx-dl
 
-      - name: Download nextbsd continuous image
+      - name: Fetch the latest component continuous artifacts + overlays seed
         env:
-          # Reads a public `continuous` release asset — no PAT needed; the
-          # built-in github.token authenticates gh for public reads and lets
-          # fork PRs run this step (they get a read-only github.token, no secrets).
+          # Public cross-repo reads (github.token, not a PAT) so fork PRs run.
           GH_TOKEN: ${{ github.token }}
+          ARCH: ${{ matrix.target }}
         run: |
-          # Arch-scoped: `continuous` carries BOTH NextBSD-amd64-*.img.zip and
-          # NextBSD-arm64-*.img.zip since the arm64 lane was restored
-          # (nextbsd#407). A bare '*.img.zip' downloads two files, and then
-          # `unzip -Z1 iso/*.img.zip` globs to two paths -- unzip reads the first
-          # as the archive and the SECOND as a member filter inside it, matches
-          # nothing, and the step dies with "no .img member in published zip".
-          # Each leg boots the arch it builds for, so the pattern is
-          # arch-scoped; ZIP is the single-image invariant, not the release.
-          gh release download continuous -R nextbsd/nextbsd \
-            --pattern 'NextBSD-${{ matrix.target }}-*.img.zip' --dir iso --clobber
-          ZIP=$(ls iso/NextBSD-${{ matrix.target }}-*.img.zip | head -1)
-          [ -n "$ZIP" ] || { echo "no ${{ matrix.target }} .img.zip on the continuous release" >&2; exit 1; }
-          MEMBER=$(unzip -Z1 "$ZIP" | grep -E '\.img$' | head -1)
-          [ -n "$MEMBER" ] || { echo "no .img member in $ZIP" >&2; exit 1; }
-          unzip -p "$ZIP" "$MEMBER" > disk.img
-          rm -rf iso
-          ls -lh disk.img
+          set -eu
+          mkdir -p art seed
+          gh release download continuous -R nextbsd/nextbsd-freebsd-compat \
+            --pattern "nextbsd-base-${ARCH}.tar.gz" --dir art --clobber
+          gh release download continuous -R nextbsd/nextbsd-kernel \
+            --pattern "nextbsd-kernel-${ARCH}.tar.gz" --dir art --clobber
+          gh release download continuous -R nextbsd/nextbsd-userland \
+            --pattern "nextbsd-userland-${ARCH}.tar.gz" --dir art --clobber
+          # contrib (sudo/zsh/pico) is best-effort: a mid-flight rebuild of an
+          # unrelated component must not gate the kext lane.
+          gh release download continuous -R nextbsd/nextbsd-contrib \
+            --pattern "nextbsd-contrib-${ARCH}.tar.gz" --dir art --clobber || true
+          # pkg-free /etc seed (the API tarball needs no git in the container).
+          gh api repos/nextbsd/nextbsd-overlays/tarball/main > /tmp/overlays.tar.gz
+          tar -C seed --strip-components=1 -xzf /tmp/overlays.tar.gz
+          # The PR's kext artifact is a directory tree; the shared assembly
+          # takes tarballs, so re-tar from the kext root (kexts at top level,
+          # matching the continuous graphics-kexts-<arch> layout).
+          KDIR=$(dirname "$(find gfx-dl -maxdepth 3 -name '*.kext' -type d | head -1)")
+          [ -n "$KDIR" ] || { echo "no kexts in the graphics artifact" >&2; find gfx-dl | head; exit 1; }
+          tar -C "$KDIR" -czf "art/graphics-kexts-${ARCH}-pr.tar.gz" .
+          echo "==> component artifacts:"; ls -lh art/
 
-      # Root is freebsd-ufs (not writable from Linux): md-attach the image,
-      # mount ROOTFS, drop the virtio-gpu trio into /System/Library/Extensions,
-      # unmount. copyback brings the mutated disk.img back to the runner. UFS is
-      # arch-independent, so the mutation host is the same FreeBSD VM on both
-      # legs (freebsd-vm picks the arch of the runner: x86_64 / aarch64).
-      - name: Inject the virtio-gpu trio into the image's UFS root
-        uses: vmactions/freebsd-vm@v1
+      - name: Checkout shared assembly + boot harness (nextbsd-ci, pinned)
+        uses: actions/checkout@v4
         with:
-          release: '15.0'
-          usesh: true
-          sync: rsync
-          copyback: true
-          run: |
-            set -eu
-            md=$(mdconfig -a -t vnode -f disk.img)
-            gpart show -p "$md"
-            part=$(gpart show -p "$md" | awk '/freebsd-ufs/{print $3; exit}')
-            [ -n "$part" ] || { echo "no freebsd-ufs partition" >&2; exit 1; }
-            mkdir -p /mnt-root
-            mount "/dev/$part" /mnt-root
-            mkdir -p /mnt-root/System/Library/Extensions
-            # The lane asserts the trio kextd autoloads on the virtio-gpu
-            # device, so every member is REQUIRED: a missing one is a red
-            # lane, not a skipped stage. (BochsGraphics/VBoxGraphics are not
-            # injected: the machine has a virtio-gpu device, not a stdvga or
-            # 80ee:beef one, so neither could bind.) All three are needed:
-            # VirtIOGraphics resolves through LinuxVirtIO (the virtio shim) and
-            # IOGraphicsShmem (the shmem GEM layer).
-            GFXDIR=$(find gfx-dl -maxdepth 3 -name 'VirtIOGraphics.kext' -type d 2>/dev/null | head -1)
-            [ -n "$GFXDIR" ] || { echo "no VirtIOGraphics.kext in the graphics artifact" >&2; find gfx-dl -name '*.kext' -type d; exit 1; }
-            GFXDIR=$(dirname "$GFXDIR")
-            missing=""
-            for k in LinuxVirtIO IOGraphicsShmem VirtIOGraphics; do
-              [ -d "$GFXDIR/$k.kext" ] || { missing="$missing $k"; continue; }
-              cp -R "$GFXDIR/$k.kext" /mnt-root/System/Library/Extensions/
-              chown -R root:wheel /mnt-root/System/Library/Extensions/$k.kext
-              chmod -R go-w /mnt-root/System/Library/Extensions/$k.kext
-            done
-            [ -z "$missing" ] || { echo "INCOMPLETE virtio-gpu trio (missing:$missing)" >&2; exit 1; }
-            echo "==> virtio-gpu trio injected (LinuxVirtIO, IOGraphicsShmem, VirtIOGraphics)"
-            ls -lR /mnt-root/System/Library/Extensions/
-            # Install the on-image kext GPU validation test (T6). The shared
-            # harness runs it after login; it kextstat-checks the VirtIOGraphics
-            # kext kextd autoloaded on the virtio-gpu device and emits the
-            # sentinel the harness reads. /usr/tests is the FreeBSD base tests
-            # directory.
-            mkdir -p /mnt-root/usr/tests/nextbsd/kext
-            cp tests/kext-on-image-run.sh /mnt-root/usr/tests/nextbsd/kext/run.sh
-            chown root:wheel /mnt-root/usr/tests/nextbsd/kext/run.sh
-            chmod 755 /mnt-root/usr/tests/nextbsd/kext/run.sh
-            umount /mnt-root
-            mdconfig -d -u "$md"
-            echo "==> virtio-gpu trio injected"
+          repository: nextbsd/nextbsd-ci
+          ref: v0.3.2
+          path: nextbsd-ci
 
-      - name: Install qemu + expect + firmware
+      - name: Assemble the kext image (shared nextbsd-ci assembly)
+        env:
+          ARCH: ${{ matrix.target }}
+          WORK: ${{ github.workspace }}/nbimg
+          BASE_TGZ: ${{ github.workspace }}/art/nextbsd-base-${{ matrix.target }}.tar.gz
+          KERNEL_TGZ: ${{ github.workspace }}/art/nextbsd-kernel-${{ matrix.target }}.tar.gz
+          USERLAND_TGZ: ${{ github.workspace }}/art/nextbsd-userland-${{ matrix.target }}.tar.gz
+          CONTRIB_TGZ: ${{ github.workspace }}/art/nextbsd-contrib-${{ matrix.target }}.tar.gz
+          MODULES_TGZ: ${{ github.workspace }}/art/graphics-kexts-${{ matrix.target }}-pr.tar.gz
+          SEED_ROOTFS: ${{ github.workspace }}/seed/rootfs
+          EXTRA_ROOTFS: ${{ github.workspace }}/extra
+        run: |
+          set -eu
+          # Bake the on-image kextstat test into the rootfs (EXTRA_ROOTFS
+          # overlay): kextd autoloads the virtio-gpu kext at boot, so the test
+          # is a plain kextstat check + the sentinel the harness reads.
+          mkdir -p extra/usr/tests/nextbsd/kext
+          cp tests/kext-on-image-run.sh extra/usr/tests/nextbsd/kext/run.sh
+          chmod 755 extra/usr/tests/nextbsd/kext/run.sh
+          sh nextbsd-ci/scripts/assemble-image.sh
+
+      - name: Upload assembled kext image
+        uses: actions/upload-artifact@v4
+        with:
+          name: kext-ci-image-${{ matrix.target }}
+          path: nbimg/out/disk.img
+
+  kext-boot:
+    name: kext boot test (VirtIOGraphics autoload, qemu)
+    needs: [kext-image]
+    if: github.event_name == 'pull_request'
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: amd64
+            runner: ubuntu-24.04
+          - target: arm64
+            runner: ubuntu-24.04-arm
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4          # kernel-extensions: tests/ + the harness wrapper
+
+      - name: Download assembled kext image
+        uses: actions/download-artifact@v4
+        with:
+          name: kext-ci-image-${{ matrix.target }}
+          path: .
+
+      - name: Checkout shared boot harness (nextbsd-ci, pinned)
+        uses: actions/checkout@v4
+        with:
+          repository: nextbsd/nextbsd-ci
+          ref: v0.3.2
+          path: nextbsd-ci
+
+      - name: Install qemu + expect + UEFI firmware
         run: |
           sudo apt-get update
           if [ "${{ matrix.target }}" = "arm64" ]; then
@@ -1682,11 +1692,11 @@ jobs:
             sudo apt-get install -y --no-install-recommends qemu-system-x86 expect ovmf
           fi
 
-      # The on-image test (tests/kext-on-image-run.sh, installed into the image
-      # by the mutation step) does the GPU validation: kextd autoloads the
-      # VirtIOGraphics kext on the virtio-gpu device, and it kextstat-checks it
-      # + emits the sentinel. The thin wrapper runs it via the shared harness;
-      # the same assertion on both arches is the point.
+      # The on-image test (baked in by the assembly step) does the GPU
+      # validation: kextd autoloads the VirtIOGraphics kext on the virtio-gpu
+      # device, and it kextstat-checks it + emits the sentinel. The thin
+      # wrapper runs it via the shared harness; the same assertion on both
+      # arches is the point.
       - name: Boot test (shared harness, on-image kextstat)
         run: |
           chmod +x tests/kext-boot-test.sh
