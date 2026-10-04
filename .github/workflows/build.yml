@@ -1552,7 +1552,7 @@ jobs:
   # release tag) -- no freebsd-vm, no prebuilt-image mutation, no pkg. It is
   # then booted in the shared harness and asserted on the virtio-gpu trio.
   # The harness boots both arches with -device virtio-gpu-pci (nextbsd-ci
-  # v0.3.2: alongside q35's default VGA on amd64, as the display on
+  # v0.3.0: alongside q35's default VGA on amd64, as the display on
   # virt/arm64), so the binding kext is VirtIOGraphics on BOTH lanes and the
   # on-image assertion is identical. PR-only, never publishes.
   kext-image:
@@ -1621,7 +1621,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: nextbsd/nextbsd-ci
-          ref: v0.3.2
+          ref: v0.3.3
           path: nextbsd-ci
 
       - name: Assemble the kext image (shared nextbsd-ci assembly)
@@ -1678,7 +1678,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: nextbsd/nextbsd-ci
-          ref: v0.3.2
+          ref: v0.3.3
           path: nextbsd-ci
 
       - name: Install qemu + expect + UEFI firmware
