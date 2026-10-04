@@ -3,7 +3,7 @@
 # (T4). Boots the kext image and runs the on-image GPU kext validation
 # (/usr/tests/nextbsd/kext/run.sh, installed by the FreeBSD-VM mutation): kextd
 # auto-loads the GPU kext on boot, so it is a plain kextstat check + the
-# sentinel the harness reads. The harness exit class is the gate; the BOCHS
+# sentinel the harness reads. The harness exit class is the gate; the VIRTIO
 # marker lives in a kext-local overlay (tests/overlay-kext.tsv), so no nextbsd-ci
 # tag bump is needed. NB_BOOT_VERBOSE=1 keeps the serial transcript for diagnosis.
 set -eu
@@ -28,11 +28,11 @@ case "$IMG" in
     ;;
 esac
 
-echo "==> kext boot test: $IMG — shared harness, on-image GPU (bochs) kextstat"
+echo "==> kext boot test: $IMG — shared harness, on-image GPU (virtio-gpu) kextstat"
 ls -lh "$IMG"
 
 # Fetch the shared harness at the pinned lockstep tag (absent = first run).
-[ -d nextbsd-ci/.git ] || git clone --depth 1 --branch v0.2.3 \
+[ -d nextbsd-ci/.git ] || git clone --depth 1 --branch v0.3.0 \
   https://github.com/nextbsd/nextbsd-ci.git nextbsd-ci
 
 NB_SUITE=/usr/tests/nextbsd/kext/run.sh \
