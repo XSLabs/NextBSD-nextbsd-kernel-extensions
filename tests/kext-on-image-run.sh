@@ -26,9 +26,14 @@ ok=0
 fail=0
 skip=0
 
+# FreeBSD names the arm64 arch "arm64" (uname -m), Linux/ELF "aarch64";
+# accept both. Anything else is treated as amd64: a display gate that
+# cannot tell the arch apart should fail loudly, not silently skip.
 machine=$(uname -m 2>/dev/null || echo unknown)
+echo "kext suite: machine=$machine"
 
-if [ "$machine" = "aarch64" ]; then
+case "$machine" in
+aarch64|arm64)
     # arm64: VirtIOGraphics is the display (the only video device on virt).
     if kextstat 2>/dev/null | grep -qi virtiographics; then
         echo "VIRTIO-OK: VirtIOGraphics is loaded (virtio-gpu bound)"
@@ -39,7 +44,8 @@ if [ "$machine" = "aarch64" ]; then
         kextstat 2>/dev/null || true
         fail=$((fail + 1))
     fi
-else
+    ;;
+*)
     # amd64: BochsGraphics is the display (boot VGA -> vgapci0).
     if kextstat 2>/dev/null | grep -qi bochsgraphics; then
         echo "BOCHS-OK: BochsGraphics is loaded (boot VGA bound)"
@@ -60,7 +66,8 @@ else
         echo "VGAP-FAIL: no VirtIOGraphics in kextstat (amd64 vgap still undriven)"
         kextstat 2>/dev/null | grep -i virtio || true
     fi
-fi
+    ;;
+esac
 
 echo "NEXTBSD-KEXT-SUITE-DONE"
 echo "NEXTBSD-TEST-SUMMARY ok=$ok fail=$fail skip=$skip"
