@@ -1658,7 +1658,12 @@ jobs:
           path: nbimg/out/disk.img
 
   kext-boot:
-    name: kext boot test (VirtIOGraphics autoload, qemu)
+    # Per-arch display gate: IOKit picks each arch's NATIVE display kext, so
+    # the lane asserts bochs (amd64's first/boot VGA — unremovable, OVMF
+    # depends on it) and virtio (arm64's only video device). The amd64
+    # virtio-gpu add-on (vgap gap, nextbsd-ci#6) is tracked as a warn, not a
+    # gate. See tests/overlay-kext.tsv.
+    name: kext boot test (per-arch display kext, qemu)
     needs: [kext-image]
     if: github.event_name == 'pull_request'
     runs-on: ${{ matrix.runner }}
