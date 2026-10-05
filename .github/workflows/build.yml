@@ -1627,7 +1627,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: nextbsd/nextbsd-ci
-          ref: v0.3.3
+          ref: v0.3.4
           path: nextbsd-ci
 
       - name: Assemble the kext image (shared nextbsd-ci assembly)
@@ -1684,7 +1684,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: nextbsd/nextbsd-ci
-          ref: v0.3.3
+          ref: v0.3.4
           path: nextbsd-ci
 
       - name: Install qemu + expect + UEFI firmware
