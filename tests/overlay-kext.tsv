@@ -1,10 +1,27 @@
-# kext-local marker overlay (T4). The shared nextbsd-ci manifest (markers.tsv)
-# is checked out at the pinned tag and loaded first; this overlay adds the GPU
-# marker the kext image's booted qemu binds, so the kext repo version-codes its
-# own assertion without a nextbsd-ci tag bump.
+# kext-local marker overlay (T6). The shared nextbsd-ci manifest (markers.tsv)
+# is checked out at the pinned tag and loaded first; this overlay declares the
+# display markers the kext image's booted guest must have, so the kext repo
+# version-codes its own assertions without a nextbsd-ci tag bump.
 #
-# BOCHS: q35's default VGA is a stdvga device, so the binding GPU kext on the
-# shared amd64 lane is BochsGraphics. fail-gates: a -FAIL (the GPU kext did not
-# come up) is a real graphics regression and fails the boot; a bare absence does
-# not gate (the marker only exists if the on-image suite actually ran the check).
-BOCHS	nextbsd-kernel-extensions	both	fail-gates	480	T4 GPU validation: kext image's booted q35 (default stdvga VGA) must have BochsGraphics autoloaded + bound; a -FAIL is a graphics regression.
+# Per-arch display gate — IOKit picks each arch's NATIVE display kext from
+# the devices the machine has, so the gate follows that split instead of
+# forcing one kext on both arches:
+#
+#   BOCHS   amd64  fail-gates  amd64's display: the q35 machine's FIRST video
+#           device is its boot VGA (vgapci0, unremovable — OVMF/efifb depend
+#           on it), mapped by IOKit to BochsGraphics. A -FAIL (the display
+#           kext did not come up) is a real graphics regression and fails the
+#           boot; a bare absence does not gate.
+#   VIRTIO  arm64  fail-gates  arm64's display: -M virt has no VGA, the only
+#           video device is the virtio-gpu -> VirtIOGraphics. Same policy.
+#   VGAP    amd64  warn        the amd64 virtio-gpu ADD-ON (a second device):
+#           it does not attach until the amd64 kernel drives it (vgap gap,
+#           nextbsd-ci#6). Reported, never gated; when the gap closes it
+#           prints VGAP-OK and can be promoted to fail-gates.
+#
+# NOTE: the on-image suite emits ONLY its own arch's markers. The harness'
+# marker arms are policy-driven (a fail-gates -FAIL exits 1 even off-arch),
+# so arm64 never prints BOCHS/VGAP and amd64 never prints VIRTIO.
+VIRTIO	nextbsd-kernel-extensions	arm64	fail-gates	480	T6 GPU validation (arm64): the booted guest's display (virtio-gpu, the only video device on -M virt) must have VirtIOGraphics autoloaded; a -FAIL is a graphics regression.
+BOCHS	nextbsd-kernel-extensions	amd64	fail-gates	480	T6 GPU validation (amd64): the booted guest's display (boot VGA vgapci0, q35's first video device) must have BochsGraphics autoloaded; a -FAIL is a graphics regression.
+VGAP	nextbsd-kernel-extensions	amd64	warn	480	T6 GPU validation (amd64, informational): the virtio-gpu add-on does not attach on amd64 (vgap gap, nextbsd-ci#6) until the amd64 kernel drives it; a -FAIL is reported, not gated.
