@@ -2,6 +2,31 @@ name: Build NextBSD Kernel Extensions
 on:
   repository_dispatch:
     types: [kernel-updated]
+  push:
+    # T10 (nextbsd-ci#12): a merged PR must rebuild + refresh `continuous` the
+    # way nextbsd-kernel already does (its push trigger is paths-gated the same
+    # way). Without it, a merge to main fired a push event nothing listened for,
+    # so the maintainer had to run workflow_dispatch by hand. The pull_request
+    # runs never publish (publish is gated on refs/heads/main), so this is the
+    # only new publication path: merge = rebuild + publish.
+    paths:
+      - 'graphics/**'
+      - 'tools/check-kext-symbols.py'
+      - 'tools/gen-bochs-personalities.sh'
+      - 'tools/gen-vboxvideo-personalities.sh'
+      - '.github/workflows/build.yml'
+      - 'tools/ko2kext.sh'
+      - 'tools/gen-iwlwifi-personalities.sh'
+      - 'tools/gen-em-personalities.sh'
+      - 'tools/gen-i915-personalities.sh'
+      - 'tools/gen-amdgpu-personalities.sh'
+      - 'tools/gen-radeon-personalities.sh'
+      - 'tools/gen-nvidia-personalities.sh'
+      - 'tools/nvidia-portpatch.sh'
+      - 'tools/nvidia-mkbundle.sh'
+      - 'tools/nvidia-activate.sh'
+      - 'tests/kext-boot-test.sh'
+      - 'tests/personalities-selftest.sh'
   pull_request:
     # Validate the module cross-build (both arches) on PRs touching the
     # workflow. The kernel obj tree now comes from nextbsd-kernel's rolling
@@ -96,7 +121,7 @@ jobs:
           # run on PRs. The tarball is rooted at /usr/obj's contents, so it
           # restores the same layout the old download-artifact produced.
           gh release download continuous \
-            --repo nextbsd-redux/nextbsd-kernel \
+            --repo nextbsd/nextbsd-kernel \
             --pattern "kernel-obj-${{ matrix.target }}.tar.gz" \
             --output /tmp/kernel-obj.tar.gz --clobber
           tar -C /usr/obj -xzf /tmp/kernel-obj.tar.gz
@@ -106,7 +131,7 @@ jobs:
           cd /usr/src
           # /usr/src in the container is the unpatched baked tree; re-apply the
           # same patches + config the kernel was built with.
-          git clone --depth 1 https://github.com/nextbsd-redux/nextbsd-kernel.git /tmp/nk
+          git clone --depth 1 https://github.com/nextbsd/nextbsd-kernel.git /tmp/nk
           for p in $(cat /tmp/nk/patches/series); do
             echo "Applying $p"
             git apply /tmp/nk/patches/$p
@@ -243,7 +268,7 @@ jobs:
         run: |
           mkdir -p /usr/obj
           gh release download continuous \
-            --repo nextbsd-redux/nextbsd-kernel \
+            --repo nextbsd/nextbsd-kernel \
             --pattern "kernel-obj-${{ matrix.target }}.tar.gz" \
             --output /tmp/kernel-obj.tar.gz --clobber
           tar -C /usr/obj -xzf /tmp/kernel-obj.tar.gz
@@ -253,7 +278,7 @@ jobs:
           cd /usr/src
           # Same patches + config the kernel was built with (the baked /usr/src
           # is unpatched), so drm-kmod compiles against the real NextBSD KBI.
-          git clone --depth 1 https://github.com/nextbsd-redux/nextbsd-kernel.git /tmp/nk
+          git clone --depth 1 https://github.com/nextbsd/nextbsd-kernel.git /tmp/nk
           for p in $(cat /tmp/nk/patches/series); do
             echo "Applying $p"
             git apply /tmp/nk/patches/$p
@@ -1627,7 +1652,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: nextbsd/nextbsd-ci
-          ref: v0.3.4
+          ref: v0.3.5
           path: nextbsd-ci
 
       - name: Assemble the kext image (shared nextbsd-ci assembly)
@@ -1689,7 +1714,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: nextbsd/nextbsd-ci
-          ref: v0.3.4
+          ref: v0.3.5
           path: nextbsd-ci
 
       - name: Install qemu + expect + UEFI firmware
@@ -2000,7 +2025,7 @@ jobs:
         run: |
           mkdir -p /usr/obj
           gh release download continuous \
-            --repo nextbsd-redux/nextbsd-kernel \
+            --repo nextbsd/nextbsd-kernel \
             --pattern "kernel-obj-amd64.tar.gz" \
             --output /tmp/kernel-obj.tar.gz --clobber
           tar -C /usr/obj -xzf /tmp/kernel-obj.tar.gz
@@ -2008,7 +2033,7 @@ jobs:
       - name: Apply patches to source
         run: |
           cd /usr/src
-          git clone --depth 1 https://github.com/nextbsd-redux/nextbsd-kernel.git /tmp/nk
+          git clone --depth 1 https://github.com/nextbsd/nextbsd-kernel.git /tmp/nk
           for p in $(cat /tmp/nk/patches/series); do
             echo "Applying $p"
             git apply /tmp/nk/patches/$p
@@ -2140,7 +2165,7 @@ jobs:
       # bundle needs it because libnvidia-egl-gbm.so.1 NEEDs it; shipping it INSIDE the
       # bundle is what keeps NextBSD-kernel-extensions off mesa-libs -> llvm19 (1.9 GB
       # installed), which is what blew the base image past GitHub's 2 GiB asset cap.
-      # See nextbsd-redux/nextbsd#388 and the long WHY in nvidia-mkbundle.sh.
+      # See nextbsd/nextbsd#388 and the long WHY in nvidia-mkbundle.sh.
       # BUILD-TIME ONLY: we take one file out of the mesa-libs package; nothing in the
       # shipped image depends on mesa.
       - name: Fetch Mesa's libgbm.so.1 loader (build-time only, no mesa/LLVM runtime dep)
@@ -2173,7 +2198,7 @@ jobs:
           # Guard the premise: the loader must not itself pull gallium/LLVM in.
           if readelf -d "$GBM" | grep -qE 'NEEDED.*(gallium|LLVM)'; then
             echo "FAIL: this Mesa's libgbm NEEDs gallium/LLVM — bundling it would reintroduce" >&2
-            echo "  the llvm19 dependency. Do not bundle; see nextbsd-redux/nextbsd#388." >&2
+            echo "  the llvm19 dependency. Do not bundle; see nextbsd/nextbsd#388." >&2
             exit 1
           fi
           echo "NVBUNDLE_LIBGBM=$GBM" >> "$GITHUB_ENV"
