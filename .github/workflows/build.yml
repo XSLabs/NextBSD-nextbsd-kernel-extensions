@@ -1704,6 +1704,12 @@ jobs:
       # wrapper runs it via the shared harness; the same assertion on both
       # arches is the point.
       - name: Boot test (shared harness, on-image kextstat)
+        env:
+          # The assembled image is named disk.img (no arch in the name), so the
+          # harness cannot infer the arch from it; pass the matrix arch or the
+          # arm64 leg mis-infers amd64 and looks for amd64 OVMF firmware (which
+          # is not on the arm runner). Same env the userland boot job passes.
+          ARCH: ${{ matrix.target }}
         run: |
           chmod +x tests/kext-boot-test.sh
           ./tests/kext-boot-test.sh disk.img
